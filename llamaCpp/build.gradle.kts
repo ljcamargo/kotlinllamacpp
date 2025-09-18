@@ -17,6 +17,19 @@ mavenPublishing {
     )
 }
 
+signing {
+    useGpgCmd()
+}
+
+// Hook signing into publications
+publishing {
+    publications {
+        withType<MavenPublication> {
+            signing.sign(this)
+        }
+    }
+}
+
 fun nativeArchitectures(): List<String> {
     val value = project.properties["nativeArchitectures"]
     val archs = value?.toString()?.split(",") ?: listOf("x86_64", "arm64-v8a")
