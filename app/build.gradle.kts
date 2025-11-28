@@ -26,19 +26,14 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
+        ndk {
+            abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a", "x86_64"))
+        }
         externalNativeBuild {
             cmake {
-                abiFilters("arm64-v8a")
-                arguments += listOf(
-                    "-DLLAMA_BUILD_COMMON=ON",
-                    "-DCMAKE_BUILD_TYPE=Release"
-                )
+                arguments("-DLLAMA_BUILD_COMMON=ON", "-DCMAKE_BUILD_TYPE=Release")
                 cppFlags("")
             }
-        }
-        ndk {
-            //noinspection ChromeOsAbiSupport
-            abiFilters.add("arm64-v8a")
         }
     }
 
@@ -77,6 +72,8 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

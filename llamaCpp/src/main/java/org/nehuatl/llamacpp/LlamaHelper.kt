@@ -4,7 +4,7 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
 import kotlin.coroutines.resume
@@ -13,61 +13,71 @@ import kotlin.coroutines.suspendCoroutine
 class LlamaHelper(val scope: CoroutineScope = CoroutineScope(Dispatchers.IO)) {
 
     private val llama by lazy { LlamaAndroid() }
-    private var job: Job?= null
+    private var loadJob: Job? = null
     private var contextId: Int? = null
 
-    // Load GGUF model
     suspend fun load(path: String, contextLength: Int) = suspendCoroutine { continuation ->
-        job = scope.launch {
-            val config =  mapOf(
+        loadJob = scope.launch {
+            val config = mapOf(
                 "model" to path,
                 "n_ctx" to contextLength,
             )
-            val map = llama.initContext(config)
-            contextId = map?.get("contextId") as? Int ?: throw Exception("Context ID not found")
+            val result = llama.initContext(config)
+
+            if (result == null) {
+                throw Exception("initContext returned null - model initialization failed")
+            }
+
+            Log.d("LlamaHelper", "initContext result: $result")
+
+            val id = result["contextId"]
+            if (id == null) {
+                throw Exception("contextId not found in result map: $result")
+            }
+
+            contextId = when (id) {
+                is Int -> id
+                is Number -> id.toInt()
+                else -> throw Exception("contextId has unexpected type: ${id::class.java.simpleName}, value: $id")
+            }
+
+            Log.d("LlamaHelper", "Context loaded successfully with ID: $contextId")
             continuation.resume(Unit)
         }
     }
 
-    suspend fun setCollector() = suspendCoroutine { continuation ->
+    fun predict(prompt: String, partialCompletion: Boolean = true): Flow<String> {
         val context = contextId ?: throw Exception("Model was not loaded yet, load it first")
-        job = scope.launch {
-            continuation.resume(
-                llama.setEventCollector(context, this).mapNotNull { (message, token) ->
-                    if (message == "token") (token as? String) else null
-                }
-            )
+
+        val eventFlow = llama.setEventCollector(context, scope).mapNotNull { (message, token) ->
+            if (message == "token") (token as? String) else null
         }
-    }
 
-    fun unsetCollector() {
-        val context = contextId ?: throw Exception("Model was not loaded yet, load it first")
-        llama.unsetEventCollector(context)
-    }
-
-    fun predict(prompt: String, partialCompletion: Boolean) {
-        val context = contextId ?: throw Exception("Model was not loaded yet, load it first")
         llama.launchCompletion(
             id = context,
             params = mapOf(
                 "prompt" to prompt,
                 "emit_partial_completion" to partialCompletion,
             )
-        ).also {
-            Log.i("LlamaHelper", "finished launchCompletion $it")
-            job?.cancel()
+        )
+
+        return eventFlow
+    }
+
+    fun stopPrediction() {
+        contextId?.let { id ->
+            llama.unsetEventCollector(id)
         }
     }
 
-    // Release context and model in memory, call when your viewmodel or activity is destroyed
     fun release() {
         contextId?.let { id ->
             llama.releaseContext(id)
         }
     }
 
-    // Abort model loading or prediction
     fun abort() {
-        job?.cancel()
+        loadJob?.cancel()
+        stopPrediction()
     }
 }

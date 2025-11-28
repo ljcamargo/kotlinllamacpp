@@ -1,70 +1,129 @@
 package org.nehuatl.sample
 
 import android.util.Log
-import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.launch
 import org.nehuatl.llamacpp.LlamaHelper
-import java.io.File
 
-class MainViewModel: ViewModel() {
+class MainViewModel : ViewModel() {
 
     private val viewModelJob = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.IO + viewModelJob)
     private val llamaHelper by lazy { LlamaHelper(scope) }
 
-    val text = MutableStateFlow("")
+    private val _state = MutableStateFlow<GenerationState>(GenerationState.Idle)
+    val state = _state.asStateFlow()
 
-    // load model into memory
-    suspend fun loadModel(path: String) {
-        llamaHelper.load(
-            path = path, // GGUF model already in filesystem
-            contextLength = 2048,
-        )
+    private val _generatedText = MutableStateFlow("")
+    val generatedText = _generatedText.asStateFlow()
+
+    fun loadModel(path: String) {
+        if (_state.value is GenerationState.Generating) {
+            Log.w("MainViewModel", "Cannot load model while generating")
+            return
+        }
+
+        scope.launch {
+            _state.value = GenerationState.LoadingModel
+            try {
+                val actualPath = if (path.startsWith("content://")) {
+                    path
+                } else {
+                    path.removePrefix("file://")
+                }
+                llamaHelper.load(path = actualPath, contextLength = 2048)
+                _state.value = GenerationState.ModelLoaded(actualPath)
+                Log.i("MainViewModel", "Model loaded successfully: $actualPath")
+            } catch (e: Exception) {
+                _state.value = GenerationState.Error("Failed to load model: ${e.message}", e)
+                Log.e("MainViewModel", "Model load failed", e)
+            }
+        }
     }
 
-    // model should be loaded before submitting or an exception will be thrown
-    suspend fun submit(prompt: String) {
-        // collector must be called before predict
-        llamaHelper.setCollector()
-            .onStart {
-                Log.i("MainViewModel", "prediction started")
-                // prediction started, prepare your UI
-                // the first token will arrive after some seconds of warmup
-                text.emit("")
-            }
-            .onCompletion {
-                Log.i("MainViewModel", "prediction ended")
-                // onCompletion will be triggered when finished or aborted
-                llamaHelper.unsetCollector() // unset collector
-            }
-            .collect { chunk ->
-                Log.i("MainViewModel", "prediction $chunk")
-                // collect chunks of text as they arrive
-                // you can, for example, emit to a StateFlow to observe it in your UI
-                text.value += chunk
-            }
-        llamaHelper.predict(
-            prompt = prompt,
-            partialCompletion = true
-        )
+    fun generate(prompt: String) {
+        if (!_state.value.canGenerate()) {
+            Log.w("MainViewModel", "Cannot generate in current state: ${_state.value}")
+            return
+        }
+
+        scope.launch {
+            val startTime = System.currentTimeMillis()
+            var tokenCount = 0
+
+            llamaHelper.predict(prompt, partialCompletion = true)
+                .onStart {
+                    _state.value = GenerationState.Generating(
+                        prompt = prompt,
+                        startTime = startTime
+                    )
+                    _generatedText.value = ""
+                    Log.i("MainViewModel", "Generation started")
+                }
+                .onCompletion { cause ->
+                    when {
+                        cause != null -> {
+                            _state.value = GenerationState.Error("Generation interrupted", cause)
+                            Log.e("MainViewModel", "Generation interrupted", cause)
+                        }
+                        else -> {
+                            val duration = System.currentTimeMillis() - startTime
+                            _state.value = GenerationState.Completed(
+                                prompt = prompt,
+                                tokenCount = tokenCount,
+                                durationMs = duration
+                            )
+                            Log.i("MainViewModel", "Generation completed: $tokenCount tokens in ${duration}ms")
+                        }
+                    }
+                    llamaHelper.stopPrediction()
+                }
+                .catch { e ->
+                    _state.value = GenerationState.Error("Generation failed", e)
+                    _generatedText.value = ""
+                    Log.e("MainViewModel", "Generation error", e)
+                }
+                .collect { token ->
+                    _generatedText.value += token
+                    tokenCount++
+
+                    val currentState = _state.value
+                    if (currentState is GenerationState.Generating) {
+                        _state.value = currentState.copy(tokensGenerated = tokenCount)
+                    }
+                }
+        }
     }
 
-    // you can abort the model load or prediction in progress
     fun abort() {
-        Log.i("MainViewModel", "prediction ended")
-        llamaHelper.abort()
+        if (_state.value.isActive()) {
+            Log.i("MainViewModel", "Aborting generation")
+            llamaHelper.abort()
+
+            val currentState = _state.value
+            if (currentState is GenerationState.Generating) {
+                val duration = System.currentTimeMillis() - currentState.startTime
+                _state.value = GenerationState.Completed(
+                    prompt = currentState.prompt,
+                    tokenCount = currentState.tokensGenerated,
+                    durationMs = duration
+                )
+            }
+        }
     }
 
-    // don't forget to release resources when your viewmodel is destroyed
     override fun onCleared() {
         super.onCleared()
         llamaHelper.abort()
         llamaHelper.release()
+        viewModelJob.cancel()
     }
 }
