@@ -1,6 +1,8 @@
 package org.nehuatl.sample
 
+import android.content.ContentResolver
 import android.util.Log
+import androidx.core.content.ContentProviderCompat.requireContext
 import androidx.lifecycle.ViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -13,11 +15,14 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import org.nehuatl.llamacpp.LlamaHelper
 
-class MainViewModel : ViewModel() {
+class MainViewModel(val contentResolver: ContentResolver): ViewModel() {
 
     private val viewModelJob = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.IO + viewModelJob)
-    private val llamaHelper by lazy { LlamaHelper(scope) }
+    private val llamaHelper by lazy { LlamaHelper(
+        contentResolver = contentResolver,
+        scope = scope
+    )}
 
     private val _state = MutableStateFlow<GenerationState>(GenerationState.Idle)
     val state = _state.asStateFlow()
@@ -41,10 +46,9 @@ class MainViewModel : ViewModel() {
                 }
                 llamaHelper.load(path = actualPath, contextLength = 2048)
                 _state.value = GenerationState.ModelLoaded(actualPath)
-                Log.i("MainViewModel", "Model loaded successfully: $actualPath")
             } catch (e: Exception) {
                 _state.value = GenerationState.Error("Failed to load model: ${e.message}", e)
-                Log.e("MainViewModel", "Model load failed", e)
+                Log.e(">>> ERR ", "Model load failed", e)
             }
         }
     }

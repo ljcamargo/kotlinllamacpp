@@ -1,7 +1,10 @@
 package org.nehuatl.llamacpp
 
+import android.content.ContentResolver
+import android.net.Uri
 import android.os.Build
 import android.util.Log
+import androidx.core.net.toUri
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -17,11 +20,10 @@ import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.absoluteValue
 
-class LlamaAndroid {
+class LlamaAndroid(val resolver: ContentResolver) {
 
     companion object {
         private const val NAME = "RNLlama"
-        private val ggufHeader = byteArrayOf(0x47, 0x47, 0x55, 0x46)
 
         init {
             Log.d(NAME, "Primary ABI: ${Build.SUPPORTED_ABIS[0]}")
@@ -103,10 +105,14 @@ class LlamaAndroid {
                 throw Exception("Context limit reached")
             }
             val id = Random().nextInt().absoluteValue
+            if (!isGGUF((params["model"] as String).toUri())) {
+                throw IllegalArgumentException("File is not in GGUF format")
+            }
             val llamaContext = LlamaContext(id, params)
             if (llamaContext.context == 0L) {
                 throw Exception("Failed to initialize context")
             }
+
             contexts[id] = llamaContext
             mapOf(
                 "contextId" to id,
@@ -123,6 +129,20 @@ class LlamaAndroid {
     fun releaseContext(id: Int) {
         contexts[id]!!.release()
         contexts.remove(id)
+    }
+
+    fun isGGUF(uri: Uri): Boolean {
+        val ggufHeader = byteArrayOf(0x47, 0x47, 0x55, 0x46)
+        return try {
+            resolver.openInputStream(uri)?.use { input ->
+                val header = ByteArray(4)
+                if (input.read(header) != 4) return false
+                header.contentEquals(ggufHeader)
+            } ?: false
+        } catch (err: Exception) {
+            Log.v(">>> GUF ERR", ">>> gguf err $err")
+            false
+        }
     }
 
     fun getFormattedChat(

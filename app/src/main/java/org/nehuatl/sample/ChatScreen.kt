@@ -1,14 +1,31 @@
 package org.nehuatl.sample
 
-import android.net.Uri
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -17,31 +34,28 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 fun ChatScreen(
     modifier: Modifier = Modifier,
     viewModel: MainViewModel,
-    currentModelUri: Uri?,
+    currentModelPath: String?,
     onPickModel: () -> Unit
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val generatedText by viewModel.generatedText.collectAsStateWithLifecycle()
-    val context = LocalContext.current
 
     var promptInput by remember { mutableStateOf("") }
-    var showModelDialog by remember { mutableStateOf(currentModelUri == null) }
+    var showModelDialog by remember { mutableStateOf(currentModelPath == null) }
 
-    LaunchedEffect(currentModelUri) {
-        if (currentModelUri != null && state is GenerationState.Idle) {
-            val path = currentModelUri.path ?: return@LaunchedEffect
-            viewModel.loadModel(path)
+    LaunchedEffect(currentModelPath) {
+        if (currentModelPath != null && state is GenerationState.Idle) {
+            viewModel.loadModel(currentModelPath)
         }
     }
 
     if (showModelDialog) {
         ModelPickerDialog(
-            currentModel = currentModelUri,
             onPickFile = {
                 showModelDialog = false
                 onPickModel()
             },
-            onDismiss = if (currentModelUri != null) {
+            onDismiss = if (currentModelPath != null) {
                 { showModelDialog = false }
             } else null
         )
@@ -55,7 +69,7 @@ fun ChatScreen(
     ) {
         StatusBar(
             state = state,
-            currentModel = currentModelUri,
+            currentModel = currentModelPath,
             onChangeModel = { showModelDialog = true }
         )
 
@@ -82,7 +96,6 @@ fun ChatScreen(
 
 @Composable
 private fun ModelPickerDialog(
-    currentModel: Uri?,
     onPickFile: () -> Unit,
     onDismiss: (() -> Unit)?
 ) {
@@ -128,7 +141,7 @@ private fun ModelPickerDialog(
 @Composable
 private fun StatusBar(
     state: GenerationState,
-    currentModel: Uri?,
+    currentModel: String?,
     onChangeModel: () -> Unit
 ) {
     Card(

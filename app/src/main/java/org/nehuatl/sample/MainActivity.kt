@@ -1,8 +1,8 @@
 package org.nehuatl.sample
 
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -19,8 +19,7 @@ import org.nehuatl.sample.ui.theme.KotlinLlamaCppTheme
 
 class MainActivity : ComponentActivity() {
 
-    private var modelUri by mutableStateOf<Uri?>(null)
-    private var showFilePicker by mutableStateOf(false)
+    private var modelPath by mutableStateOf<String?>(null)
 
     private val filePickerLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -30,7 +29,7 @@ class MainActivity : ComponentActivity() {
                 it,
                 Intent.FLAG_GRANT_READ_URI_PERMISSION
             )
-            modelUri = it
+            modelPath = it.toString()
         }
     }
 
@@ -40,13 +39,14 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             KotlinLlamaCppTheme {
-                val viewModel: MainViewModel = viewModel()
-
+                val viewModel: MainViewModel = viewModel{
+                    MainViewModel(contentResolver)
+                }
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     ChatScreen(
                         modifier = Modifier.padding(innerPadding),
                         viewModel = viewModel,
-                        currentModelUri = modelUri,
+                        currentModelPath = modelPath,
                         onPickModel = {
                             filePickerLauncher.launch(arrayOf("*/*"))
                         }

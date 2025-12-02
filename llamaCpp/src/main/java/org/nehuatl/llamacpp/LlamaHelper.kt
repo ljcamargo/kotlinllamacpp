@@ -1,6 +1,8 @@
 package org.nehuatl.llamacpp
 
+import android.content.ContentResolver
 import android.util.Log
+import androidx.core.net.toUri
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -10,16 +12,28 @@ import kotlinx.coroutines.launch
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
-class LlamaHelper(val scope: CoroutineScope = CoroutineScope(Dispatchers.IO)) {
+class LlamaHelper(
+    val contentResolver: ContentResolver,
+    val scope: CoroutineScope = CoroutineScope(Dispatchers.IO)
+) {
 
-    private val llama by lazy { LlamaAndroid() }
+    private val llama by lazy { LlamaAndroid(contentResolver) }
     private var loadJob: Job? = null
     private var contextId: Int? = null
 
     suspend fun load(path: String, contextLength: Int) = suspendCoroutine { continuation ->
         loadJob = scope.launch {
+            val uri = path.toUri()
+            val useMMap = uri.scheme != "content"
+            val pfd = contentResolver.openFileDescriptor(uri, "r")
+                ?: throw IllegalArgumentException("Cannot open URI")
+            val fd = pfd.detachFd()
+
             val config = mapOf(
                 "model" to path,
+                "model_fd" to fd,
+                "use_mmap" to false,
+                "use_mlock" to false,
                 "n_ctx" to contextLength,
             )
             val result = llama.initContext(config)
@@ -27,8 +41,6 @@ class LlamaHelper(val scope: CoroutineScope = CoroutineScope(Dispatchers.IO)) {
             if (result == null) {
                 throw Exception("initContext returned null - model initialization failed")
             }
-
-            Log.d("LlamaHelper", "initContext result: $result")
 
             val id = result["contextId"]
             if (id == null) {
@@ -42,6 +54,7 @@ class LlamaHelper(val scope: CoroutineScope = CoroutineScope(Dispatchers.IO)) {
             }
 
             Log.d("LlamaHelper", "Context loaded successfully with ID: $contextId")
+            pfd.close()
             continuation.resume(Unit)
         }
     }

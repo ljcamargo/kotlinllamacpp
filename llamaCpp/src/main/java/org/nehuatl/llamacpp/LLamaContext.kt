@@ -7,7 +7,6 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import java.io.BufferedReader
 import java.io.File
-import java.io.FileInputStream
 import java.io.FileReader
 import java.io.IOException
 
@@ -18,7 +17,6 @@ class LlamaContext(private val id: Int, params: Map<String, Any>) {
 
     companion object {
         private const val NAME = "RNLlamaContext"
-        private val ggufHeader = byteArrayOf(0x47, 0x47, 0x55, 0x46)
 
         init {
             Log.d(NAME, "Primary ABI: ${Build.SUPPORTED_ABIS[0]}")
@@ -82,29 +80,7 @@ class LlamaContext(private val id: Int, params: Map<String, Any>) {
 
     val context: Long
     val modelDetails: Map<String, Any>
-    private val ggufHeader = byteArrayOf(0x47, 0x47, 0x55, 0x46)
 
-    private fun isGGUF(filepath: String): Boolean {
-        var fis: FileInputStream? = null
-        try {
-            fis = FileInputStream(filepath)
-            val fileHeader = ByteArray(4)
-            val bytesRead = fis.read(fileHeader)
-            if (bytesRead < 4) {
-                return false
-            }
-            for (i in 0..3) {
-                if (fileHeader[i] != ggufHeader[i]) {
-                    return false
-                }
-            }
-            return true
-        } catch (e: Exception) {
-            return false
-        } finally {
-            fis?.close()
-        }
-    }
 
     init {
         if (!isArm64V8a() && !isX86_64()) {
@@ -113,14 +89,11 @@ class LlamaContext(private val id: Int, params: Map<String, Any>) {
         if (!params.containsKey("model")) {
             throw IllegalArgumentException("Missing required parameter: model")
         }
-        // Check if file has GGUF magic numbers
-        if (!isGGUF(params["model"] as String)) {
-            throw IllegalArgumentException("File is not in GGUF format")
-        }
 
-        this.context = initContext(
+        this.context = initContextWithFd(
             // String model,
-            params["model"] as String,
+            params["model_fd"] as Int,
+            //params["model"] as String,
             // boolean embedding,
             params["embedding"] as? Boolean ?: false,
             // int n_ctx,
@@ -317,6 +290,22 @@ class LlamaContext(private val id: Int, params: Map<String, Any>) {
         use_mmap: Boolean,
         vocab_only: Boolean,
         lora: String,
+        lora_scaled: Float,
+        rope_freq_base: Float,
+        rope_freq_scale: Float
+    ): Long
+
+    private external fun initContextWithFd(
+        modelFd: Int,
+        embedding: Boolean,
+        n_ctx: Int,
+        n_batch: Int,
+        n_threads: Int,
+        n_gpu_layers: Int,
+        use_mlock: Boolean,
+        use_mmap: Boolean,
+        vocab_only: Boolean,
+        lora: String?,
         lora_scaled: Float,
         rope_freq_base: Float,
         rope_freq_scale: Float

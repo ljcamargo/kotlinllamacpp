@@ -1,4 +1,7 @@
 #include <jni.h>
+#include <unistd.h>
+#include <fcntl.h>
+
 // #include <android/asset_manager.h>
 // #include <android/asset_manager_jni.h>
 #include <android/log.h>
@@ -262,6 +265,94 @@ Java_org_nehuatl_llamacpp_LlamaContext_initContext(
     env->ReleaseStringUTFChars(model_path_str, model_path_chars);
     env->ReleaseStringUTFChars(lora_str, lora_chars);
 
+    return reinterpret_cast<jlong>(llama->ctx);
+}
+
+// New JNI function: same args as initContext but model represented by jint fd first
+JNIEXPORT jlong JNICALL
+Java_org_nehuatl_llamacpp_LlamaContext_initContextWithFd(
+        JNIEnv *env,
+        jobject thiz,
+        jint model_fd,
+        jboolean embedding,
+        jint n_ctx,
+        jint n_batch,
+        jint n_threads,
+        jint n_gpu_layers,
+        jboolean use_mlock,
+        jboolean use_mmap,
+        jboolean vocab_only,
+        jstring lora_str,
+        jfloat lora_scaled,
+        jfloat rope_freq_base,
+        jfloat rope_freq_scale
+) {
+    UNUSED(thiz);
+
+    gpt_params defaultParams;
+
+    defaultParams.vocab_only = vocab_only;
+    if (vocab_only) defaultParams.warmup = false;
+
+    // --- Duplicate FD ----------------------------------------------------
+    if (model_fd < 0) {
+        LOGW("Invalid model_fd < 0");
+        return 0;
+    }
+
+    int dupfd = dup(model_fd);
+    if (dupfd == -1) {
+        LOGW("dup(model_fd=%d) failed errno=%d (%s)",
+             model_fd, errno, strerror(errno));
+        return 0;
+    }
+
+    // --- IMPORTANT PART: Pass ONLY the number as string ------------------
+    // rnllama expects a pure numeric string, NOT a path.
+    char *fdString = (char*) malloc(16);
+    snprintf(fdString, 16, "%d", dupfd);
+    defaultParams.model = fdString;
+
+    // ---------------------------------------------------------------------
+
+    defaultParams.embedding = embedding;
+    defaultParams.n_ctx = n_ctx;
+    defaultParams.n_batch = n_batch;
+
+    int max_threads = std::thread::hardware_concurrency();
+    int auto_threads = max_threads == 4 ? 2 : std::min(4, max_threads);
+    defaultParams.cpuparams.n_threads =
+            n_threads > 0 ? n_threads : auto_threads;
+
+    defaultParams.n_gpu_layers = n_gpu_layers;
+    defaultParams.use_mlock = false;   // safer on Android
+    defaultParams.use_mmap = false;    // required for FD loading
+
+    const char *lora_chars = env->GetStringUTFChars(lora_str, nullptr);
+    if (lora_chars && lora_chars[0] != '\0') {
+        defaultParams.lora_adapters.push_back({lora_chars, lora_scaled});
+        defaultParams.use_mmap = false;
+    }
+
+    defaultParams.rope_freq_base = rope_freq_base;
+    defaultParams.rope_freq_scale = rope_freq_scale;
+
+    auto llama = new rnllama::llama_rn_context();
+    bool ok = llama->loadModel(defaultParams);
+
+    LOGI("[RNLlama] is_model_loaded = %s", ok ? "true" : "false");
+
+    if (!ok) {
+        close(dupfd);
+        free(fdString);
+        llama_free(llama->ctx);
+        return 0;
+    }
+
+    // model loaded — context is valid
+    context_map[(long) llama->ctx] = llama;
+
+    env->ReleaseStringUTFChars(lora_str, lora_chars);
     return reinterpret_cast<jlong>(llama->ctx);
 }
 
