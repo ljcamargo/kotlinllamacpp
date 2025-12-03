@@ -20,6 +20,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/title_activity_main"
+            android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.KotlinLlamaCpp">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

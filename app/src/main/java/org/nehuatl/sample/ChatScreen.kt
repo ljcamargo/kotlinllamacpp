@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -26,6 +27,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -43,9 +47,25 @@ fun ChatScreen(
     var promptInput by remember { mutableStateOf("") }
     var showModelDialog by remember { mutableStateOf(currentModelPath == null) }
 
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    // Load model when path is available
     LaunchedEffect(currentModelPath) {
         if (currentModelPath != null && state is GenerationState.Idle) {
             viewModel.loadModel(currentModelPath)
+        }
+    }
+
+    // Show keyboard only when model is fully loaded and ready
+    LaunchedEffect(state) {
+        if (state is GenerationState.ModelLoaded) {
+            try {
+                focusRequester.requestFocus()
+                keyboardController?.show()
+            } catch (e: Exception) {
+                // Focus request might fail if UI isn't ready yet
+            }
         }
     }
 
@@ -64,32 +84,44 @@ fun ChatScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .imePadding() // This ensures content resizes with keyboard
     ) {
+        // Status bar stays at top
         StatusBar(
             state = state,
             currentModel = currentModelPath,
-            onChangeModel = { showModelDialog = true }
+            onChangeModel = { showModelDialog = true },
+            modifier = Modifier.padding(16.dp)
         )
 
+        // Text display takes remaining space
         TextDisplay(
             text = generatedText,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
+                .padding(horizontal = 16.dp)
         )
 
+        // Prompt input stays at bottom
         PromptInput(
             prompt = promptInput,
             onPromptChange = { promptInput = it },
             onGenerate = {
-                viewModel.generate(promptInput)
-                promptInput = ""
+                if (state.canGenerate() && promptInput.isNotBlank()) {
+                    keyboardController?.hide()
+                    viewModel.generate(promptInput)
+                    promptInput = ""
+                }
             },
-            onAbort = { viewModel.abort() },
+            onAbort = {
+                keyboardController?.hide()
+                viewModel.abort()
+            },
             enabled = state.canGenerate(),
-            isGenerating = state.isActive()
+            isGenerating = state.isGenerating(),
+            focusRequester = focusRequester,
+            modifier = Modifier.padding(16.dp)
         )
     }
 }
@@ -142,10 +174,11 @@ private fun ModelPickerDialog(
 private fun StatusBar(
     state: GenerationState,
     currentModel: String?,
-    onChangeModel: () -> Unit
+    onChangeModel: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = when (state) {
                 is GenerationState.Error -> MaterialTheme.colorScheme.errorContainer
@@ -169,7 +202,7 @@ private fun StatusBar(
             ) {
                 when (state) {
                     is GenerationState.Idle -> {
-                        Text(if (currentModel == null) "Select a model" else "Loading...")
+                        Text(if (currentModel == null) "Select a model" else "Ready")
                     }
                     is GenerationState.LoadingModel -> {
                         CircularProgressIndicator(modifier = Modifier.size(16.dp))
@@ -184,7 +217,7 @@ private fun StatusBar(
                     }
                     is GenerationState.Completed -> {
                         Text(
-                            "✓ Completed (${state.tokenCount} tokens in ${state.durationMs}ms)",
+                            "✓ Done (${state.tokenCount} tokens, ${state.durationMs}ms)",
                             color = MaterialTheme.colorScheme.primary
                         )
                     }
@@ -194,7 +227,7 @@ private fun StatusBar(
                 }
             }
 
-            if (state !is GenerationState.LoadingModel && state !is GenerationState.Generating) {
+            if (!state.isActive()) {
                 TextButton(onClick = onChangeModel) {
                     Text("Change")
                 }
@@ -208,6 +241,15 @@ private fun TextDisplay(
     text: String,
     modifier: Modifier = Modifier
 ) {
+    val scrollState = rememberScrollState()
+
+    // Auto-scroll to bottom when new text arrives
+    LaunchedEffect(text) {
+        if (text.isNotEmpty()) {
+            scrollState.animateScrollTo(scrollState.maxValue)
+        }
+    }
+
     Card(modifier = modifier) {
         Box(
             modifier = Modifier
@@ -223,7 +265,9 @@ private fun TextDisplay(
             } else {
                 Text(
                     text = text,
-                    modifier = Modifier.verticalScroll(rememberScrollState())
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(scrollState)
                 )
             }
         }
@@ -237,23 +281,31 @@ private fun PromptInput(
     onGenerate: () -> Unit,
     onAbort: () -> Unit,
     enabled: Boolean,
-    isGenerating: Boolean
+    isGenerating: Boolean,
+    focusRequester: FocusRequester,
+    modifier: Modifier = Modifier
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         TextField(
             value = prompt,
             onValueChange = onPromptChange,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .focusRequester(focusRequester),
             enabled = enabled && !isGenerating,
             placeholder = { Text("Enter your prompt...") },
-            maxLines = 3
+            maxLines = 3,
+            singleLine = false
         )
 
         if (isGenerating) {
-            Button(onClick = onAbort) {
+            Button(
+                onClick = onAbort,
+                enabled = true  // Always enabled when generating
+            ) {
                 Text("Stop")
             }
         } else {
