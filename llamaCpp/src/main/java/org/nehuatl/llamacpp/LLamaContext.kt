@@ -2,18 +2,17 @@ package org.nehuatl.llamacpp
 
 import android.os.Build
 import android.util.Log
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.launch
 import java.io.BufferedReader
 import java.io.File
 import java.io.FileReader
 import java.io.IOException
 
-class LlamaContext(private val id: Int, params: Map<String, Any>) {
+class LlamaContext(
+    private val id: Int,
+    params: Map<String, Any>
+) {
 
-    val eventFlow = MutableSharedFlow<Pair<String, Any>>(replay = 0)
-    var scope: CoroutineScope?= null
+    private var tokenCallback: ((String) -> Unit)? = null
 
     companion object {
         private const val NAME = "RNLlamaContext"
@@ -81,7 +80,6 @@ class LlamaContext(private val id: Int, params: Map<String, Any>) {
     val context: Long
     val modelDetails: Map<String, Any>
 
-
     init {
         if (!isArm64V8a() && !isX86_64()) {
             throw IllegalStateException("Only 64-bit architectures are supported")
@@ -122,17 +120,13 @@ class LlamaContext(private val id: Int, params: Map<String, Any>) {
         this.modelDetails = loadModelDetails(this.context).toMutableMap()
     }
 
+    fun setTokenCallback(callback: (String) -> Unit) {
+        tokenCallback = callback
+    }
+
     fun getFormattedChat(messages: List<Map<String, Any>>, chatTemplate: String): String {
         val msgs = messages.toTypedArray()
         return getFormattedChat(context, msgs, chatTemplate.ifEmpty { "" })
-    }
-
-    fun emitPartialCompletion(tokenResult: Map<String, Any>) {
-        //TODO: log->"emiting partial completion $tokenResult".v()
-        val tokenWord = tokenResult["token"] as? String ?: ""
-        scope?.launch {
-            eventFlow.emit( "token" to tokenWord)
-        }
     }
 
     private inner class PartialCompletionCallback {
@@ -144,7 +138,7 @@ class LlamaContext(private val id: Int, params: Map<String, Any>) {
 
         fun onPartialCompletion(tokenResult: Map<String, Any>) {
             if (!emitNeeded) return
-            emitPartialCompletion(tokenResult)
+            tokenCallback?.invoke(tokenResult["token"] as String)
         }
     }
 

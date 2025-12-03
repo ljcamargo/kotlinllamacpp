@@ -16,6 +16,8 @@ sealed class GenerationState {
     ) : GenerationState()
     data class Error(val message: String, val cause: Throwable? = null) : GenerationState()
 
-    fun isActive(): Boolean = this is Generating
+    // Add this method that was missing
+    fun isGenerating(): Boolean = this is Generating
+    fun isActive(): Boolean = this is LoadingModel || this is Generating
     fun canGenerate(): Boolean = this is ModelLoaded || this is Completed
 }

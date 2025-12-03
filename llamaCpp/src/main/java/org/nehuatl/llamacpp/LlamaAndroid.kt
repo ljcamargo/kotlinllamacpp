@@ -5,10 +5,8 @@ import android.net.Uri
 import android.os.Build
 import android.util.Log
 import androidx.core.net.toUri
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
@@ -16,7 +14,7 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.FileReader
 import java.io.IOException
-import java.util.*
+import java.util.Random
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.absoluteValue
 
@@ -99,7 +97,10 @@ class LlamaAndroid(val resolver: ContentResolver) {
         llamaContextLimit = limit
     }
 
-    fun initContext(params: Map<String, Any>): Map<String, Any>? {
+    fun startEngine(
+        params: Map<String, Any>,
+        tokenCallback: ((String) -> Unit)
+    ): Map<String, Any>? {
         return try {
             if (contexts.size >= llamaContextLimit) {
                 throw Exception("Context limit reached")
@@ -112,7 +113,7 @@ class LlamaAndroid(val resolver: ContentResolver) {
             if (llamaContext.context == 0L) {
                 throw Exception("Failed to initialize context")
             }
-
+            llamaContext.setTokenCallback(tokenCallback)
             contexts[id] = llamaContext
             mapOf(
                 "contextId" to id,
@@ -176,25 +177,12 @@ class LlamaAndroid(val resolver: ContentResolver) {
         }
     }.flowOn(Dispatchers.IO)
 
-    fun setEventCollector(id: Int, scope: CoroutineScope): MutableSharedFlow<Pair<String, Any>> {
-        val context = contexts[id] ?: throw Exception("Context not found")
-        context.scope = scope
-        return context.eventFlow
-    }
-
-    fun unsetEventCollector(id: Int) {
-        val context = contexts[id] ?: return
-        context.scope = null
-    }
-
     fun launchCompletion(id: Int, params: Map<String, Any>): Map<String, Any>?  {
         Log.i(NAME, "completion $id of $params")
         return try {
             val context = contexts[id] ?: throw Exception("Context not found")
             if (context.isPredicting()) throw Exception("Context is busy")
-            context.completion(params).also {
-                Log.i(NAME, "\"got completion $it")
-            }
+            context.completion(params)
         } catch (e: Exception) {
             Log.e(NAME, "Error during completion", e)
             null
