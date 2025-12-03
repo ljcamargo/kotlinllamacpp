@@ -24,7 +24,12 @@ class LlamaHelper(
 
     fun load(path: String, contextLength: Int, loaded: (Long) -> Unit) {
         currentContext?.let { id -> llama.releaseContext(id) }
-        val uri = path.toUri()
+        val actualPath = if (path.startsWith("content://")) {
+            path
+        } else {
+            path.removePrefix("file://")
+        }
+        val uri = actualPath.toUri()
         val useMMap = uri.scheme != "content"
         val pfd = contentResolver.openFileDescriptor(uri, "r")
             ?: throw IllegalArgumentException("Cannot open URI")

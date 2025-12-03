@@ -46,14 +46,9 @@ class MainViewModel(val contentResolver: ContentResolver): ViewModel() {
         }
         _state.value = GenerationState.LoadingModel
         try {
-            val actualPath = if (path.startsWith("content://")) {
-                path
-            } else {
-                path.removePrefix("file://")
-            }
-            llamaHelper.load(path = actualPath, contextLength = 2048) {
+            llamaHelper.load(path = path, contextLength = 2048) {
                 Log.i("MainViewModel", "Model loaded successfully")
-                _state.value = GenerationState.ModelLoaded(actualPath)
+                _state.value = GenerationState.ModelLoaded(path)
             }
         } catch (e: Exception) {
             _state.value = GenerationState.Error("Failed to load model: ${e.message}", e)
@@ -68,7 +63,7 @@ class MainViewModel(val contentResolver: ContentResolver): ViewModel() {
         }
 
         scope.launch {
-            llamaHelper.predict(prompt, partialCompletion = true)
+            llamaHelper.predict(prompt)
             llmFlow.collect { event ->
                 when (event) {
                     is LlamaHelper.LLMEvent.Started -> {
