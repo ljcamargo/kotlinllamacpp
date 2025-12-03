@@ -1,5 +1,7 @@
 # Kotlin-LlamaCpp
 
+### Implementing GGUF Local Inference into Android ARM Devices with EASE
+
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Optimized for Arm](https://img.shields.io/badge/Optimized_for-Arm-0091BD?logo=arm&logoColor=white)](https://www.arm.com/)
 
@@ -14,6 +16,7 @@ This is a very early alpha version and API may change in the future.
 [![ko-fi](https://www.ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/P5P6149YRQ)
 
 ## News
+- Content Resolver has been implemented for new versions of Android to allow local file access
 - Library has been updated to comply with 16kb pagination now enforced
 
 ## Why On-Device AI on Arm?
@@ -34,7 +37,6 @@ The vast majority of Android devices today are powered by Arm processors (Snapdr
 - **Efficient Mobile Inference**: Context Shift support from [kobold.cpp](https://github.com/LostRuins/koboldcpp) enables longer conversations without memory overflow
 - **Kotlin-First Design**: Helper class to handle initialization and context management seamlessly
 - **Flexible Control**: Support for stopping prompt processing between batches, crucial for responsive mobile UIs
-- **Advanced Sampling**: XTC sampling implementation for improved output quality
 - **Progress Monitoring**: Real-time callback support for tracking inference progress
 - **Tokenizer Support**: Vocabulary-only mode with synchronous tokenizer functions
 - **Seamless Android Integration**: Works naturally with Android development workflows and lifecycle management
@@ -61,52 +63,69 @@ Quantized models (Q4, Q5, Q8) work particularly well on Arm mobile processors, p
 
 Check this example ViewModel using LlamaHelper class for basic usage:
 ```kotlin
-class MainViewModel: ViewModel() {
+class MainViewModel: ViewModel(val contentResolver: ContentResolver) {
 
     private val viewModelJob = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.IO + viewModelJob)
-    private val llamaHelper by lazy { LlamaHelper(scope) }
     
-    val text = MutableStateFlow("")
+    private val _llmFlow = MutableSharedFlow<LlamaHelper.LLMEvent>(
+        replay = 0,
+        extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
+    val llmFlow: SharedFlow<LlamaHelper.LLMEvent> = _llmFlow.asSharedFlow()
+    
+    private val _generatedText = MutableStateFlow("")
+    val generatedText = _generatedText.asStateFlow()
 
-    // load model into memory
-    suspend fun loadModel() {
-        llamaHelper.load(
-            path = "/sdcard/Download/llama.ggmlv3.q4_0.bin",
-            contextLength = 2048,
+    private val llamaHelper by lazy {
+        LlamaHelper(
+            contentResolver = contentResolver, // <-- Recent android versions now require resolver to access local files
+            scope = scope,
+            sharedFlow = _llmFlow,
         )
     }
 
+    // load gguf model into memory
+    fun loadModel() {
+        llamaHelper.load(
+            path = "/sdcard/Download/llama.ggmlv3.q4_0.bin",
+            contextLength = 2048,
+        ) {
+            // MODEL SUCCESSFULLY LOADED (it: context id)
+            // TODO: Update your UI to allow prompts
+        }
+    }
+
     // model should be loaded before submitting or an exception will be thrown
-    suspend fun submit(prompt: String) {
-        // collector must be called before predict
-        llamaHelper.setCollector()
-            .onStart {
-                Log.i("MainViewModel", "prediction started")
-                // prediction started, prepare your UI
-                // the first token will arrive after some seconds of warmup
-                text.emit("")
+    fun generate(prompt: String) {
+        scope.launch {
+            llamaHelper.predict(prompt)
+            llmFlow.collect { event ->
+                when (event) {
+                    is LlamaHelper.LLMEvent.Started -> {
+                        // Update your UI to show the gen started
+                    }
+                    is LlamaHelper.LLMEvent.Ongoing -> {
+                        // A new token has been generated, update your UI accordingly
+                        // vb.g. _generatedText.value += event.word
+                    }
+                    is LlamaHelper.LLMEvent.Done -> {
+                        // Update your UI to show the gen completed
+                        llamaHelper.stopPrediction()
+                    }
+                    is LlamaHelper.LLMEvent.Error -> {
+                        // Update your UI to show the gen error
+                        llamaHelper.stopPrediction()
+                    }
+                    else -> {}
+                }
             }
-            .onCompletion {
-                Log.i("MainViewModel", "prediction ended")
-                // onCompletion will be triggered when finished or aborted
-                llamaHelper.unsetCollector() // unset collector
-            }
-            .collect { chunk ->
-                Log.i("MainViewModel", "prediction $chunk")
-                // collect chunks of text as they arrive
-                // you can, for example, emit to a StateFlow to observe it in your UI
-                text.value += chunk
-            }
-        llamaHelper.predict(
-            prompt = prompt,
-            partialCompletion = true
-        )
+        }
     }
 
     // you can abort the model load or prediction in progress
     fun abort() {
-        Log.i("MainViewModel", "prediction ended")
         llamaHelper.abort()
     }
 
