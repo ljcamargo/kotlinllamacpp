@@ -41,12 +41,19 @@ The vast majority of Android devices today are powered by Arm processors (Snapdr
 - **Tokenizer Support**: Vocabulary-only mode with synchronous tokenizer functions
 - **Seamless Android Integration**: Works naturally with Android development workflows and lifecycle management
 
+## Demo App
+You can find a complete, ready-to-build demo application in the [`/app`](https://github.com/ljcamargo/kotlinllamacpp/tree/master/app) directory of this repository.
+The demo showcases how to integrate the library into a standard Android app, including model loading from local storage, handling inference in a ViewModel, and displaying generated text in a Jetpack Compose UI.
+
+<img src="https://github.com/ljcamargo/kotlinllamacpp/raw/master/app/src/main/ic_launcher-playstore.png" alt="Demo App Icon" width="128"/>
+
+
 ## Installation
 
 Add the following to your project's `build.gradle`:
 ```gradle
 dependencies {
-    implementation 'io.github.ljcamargo:llamacpp-kotlin:0.1.0'
+    implementation 'io.github.ljcamargo:llamacpp-kotlin:0.2.0'
 }
 ```
 
