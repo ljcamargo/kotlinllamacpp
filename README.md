@@ -8,95 +8,161 @@
 
 Run GGUF models directly on your Android device with optimized performance and zero cloud dependency!
 
-This is an Android binding for [llama.cpp](https://github.com/ggerganov/llama.cpp) written in Kotlin, designed specifically for native Android applications. Built to leverage modern hardware capabilities, this library brings efficient large language model inference to mobile devices. The project is inspired by [cui-llama.rn](https://github.com/Vali-98/cui-llama.rn) and [llama.cpp](https://github.com/ggerganov/llama.cpp): Inference of [LLaMA](https://arxiv.org/abs/2302.13971) and multimodal models in pure C/C++, specifically tailored for native Android development in Kotlin.
+This library provides Kotlin bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp), designed specifically for native Android applications. It leverages modern hardware capabilities to bring efficient large language model inference and multimodal support to mobile devices.
 
 [![ko-fi](https://www.ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/P5P6149YRQ)
 
 ## Changelog
 ### v0.4.0 (Latest)
 - **Modernized Core**: Native codebase synchronized with the latest `llama.cpp` upstream (via `cui-llama.rn`).
-- **Multimodal Support**: Full support for vision/multimodal models (e.g., LLaVA) using `mmproj` files.
-- **Improved File Handling**: Migrated to a robust File Descriptor (FD) passing mechanism, bypassing Android's scoped storage restrictions and `/proc/self/fd` limitations.
-- **Architecture Support**: Expanded support beyond ARM-only; optimized for 64-bit platforms (`arm64-v8a` and `x86_64`).
-- **Real-time Streaming**: Enhanced JNI streaming logic with robust UTF-8 buffering to prevent crashes during token generation.
-- **UI State Feedback**: Improved `LlamaHelper` to provide immediate feedback during long-running image analysis/projection phases.
+- **Multimodal Support**: Full support for vision models (e.g., LLaVA) using `mmproj` files.
+- **Improved File Handling**: Migrated to a robust File Descriptor (FD) passing mechanism, bypassing Android's scoped storage restrictions.
+- **Architecture Support**: Optimized for 64-bit platforms (`arm64-v8a` and `x86_64`).
+- **Real-time Streaming**: Enhanced JNI logic with robust UTF-8 buffering to prevent crashes during token generation.
+- **UI State Feedback**: Improved `LlamaHelper` to provide immediate feedback during image analysis phases.
+
+---
 
 ## Why On-Device AI?
 
-Modern Android devices (Snapdragon, MediaTek, Exynos, Tensor) now possess the power to run sophisticated AI models locally. Kotlin-LlamaCpp enables:
+Modern Android devices possess the power to run sophisticated AI models locally. Kotlin-LlamaCpp enables:
 
-- **True On-Device AI**: Run large language models entirely on your phone or tablet—no internet required, complete privacy.
-- **Hardware-Accelerated Inference**: Automatic detection and utilization of CPU features (i8mm, dotprod) for hardware-accelerated inference on ARM and x86.
-- **Mobile-First Design**: Context management and batch interruption designed for the constraints of mobile processors.
+- **True On-Device AI**: Complete privacy, no internet required.
+- **Hardware Acceleration**: Automatic utilization of CPU features (i8mm, dotprod) on ARM and x86.
 - **Multimodal Capabilities**: Analyze images locally using multimodal projectors (`mmproj`).
 
-## Features
+---
 
-- **Multi-Architecture Support**: Built for `arm64-v8a` and `x86_64` with automatic CPU feature detection.
-- **Multimodal Inference**: Support for LLaVA and other vision models with per-prompt image injection.
-- **Efficient Mobile Inference**: Context Shift support from [kobold.cpp](https://github.com/LostRuins/koboldcpp) enables longer conversations without memory overflow.
-- **Kotlin-First Design**: Helper class to handle initialization and context management seamlessly.
-- **Seamless Android Integration**: Uses `ContentResolver` and File Descriptors to work naturally with Android 11+ scoped storage.
+## Getting Started
 
-## Demo App
-You can find a complete, ready-to-build demo application in the [`/app`](https://github.com/ljcamargo/kotlinllamacpp/tree/master/app) directory.
-The demo showcases model loading, multimodal image selection, handling inference in a ViewModel, and displaying generated text in a Jetpack Compose UI.
+### 1. Installation
 
-## Installation
-
-Add the following to your project's `build.gradle`:
+Add the dependency to your project's `build.gradle`:
 ```gradle
 dependencies {
     implementation 'io.github.ljcamargo:llamacpp-kotlin:0.4.0'
 }
 ```
 
-## Usage
+### 2. Architecture: The `LlamaHelper` Pattern
+
+For most use cases, it is recommended to manage the library within an Android **ViewModel**. This ensures that the engine's lifecycle is correctly tied to your UI while keeping heavy computations off the main thread.
+
+The `LlamaHelper` class requires three main components to initialize:
+1.  **`ContentResolver`**: Required to open local files via File Descriptors.
+2.  **`CoroutineScope`**: The scope in which inference tasks will run.
+3.  **`MutableSharedFlow<LLMEvent>`**: A reactive stream that emits status updates and generated tokens.
+
+#### Recommended Setup in `MainViewModel.kt`
+```kotlin
+class MainViewModel(val contentResolver: ContentResolver) : ViewModel() {
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    // Flow to collect events (Started, Ongoing, Done, etc.)
+    private val _llmFlow = MutableSharedFlow<LlamaHelper.LLMEvent>(
+        extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
+    val llmFlow = _llmFlow.asSharedFlow()
+
+    private val llamaHelper by lazy {
+        LlamaHelper(contentResolver, scope, _llmFlow)
+    }
+}
+```
+
+---
+
+## Handling Local Files (The URI Caveat)
+
+On modern Android (11+), you cannot pass traditional file paths to native libraries due to Scoped Storage. You **must** use `content://` URIs and ensure you have persistent read access.
+
+### Scenario A: User selects a model via File Picker
+Use `registerForActivityResult` and explicitly request persistable permissions. Without this, the native engine will lose access to the file once the app restarts or the URI context changes.
+
+**In your Activity/Fragment:**
+```kotlin
+private val modelPickerLauncher = registerForActivityResult(
+    ActivityResultContracts.OpenDocument()
+) { uri ->
+    uri?.let {
+        // CRITICAL: Gain long-term access to the file
+        contentResolver.takePersistableUriPermission(
+            it, Intent.FLAG_GRANT_READ_URI_PERMISSION
+        )
+        // Now you can pass uri.toString() to LlamaHelper.load()
+        viewModel.loadModel(it.toString())
+    }
+}
+```
+
+### Scenario B: Loading a fixed model from App Storage
+If your model is stored in your app's internal files directory, you can resolve its URI directly:
+```kotlin
+val file = File(context.filesDir, "my_model.gguf")
+val modelUri = Uri.fromFile(file).toString()
+llamaHelper.load(path = modelUri, contextLength = 2048) { id -> /* Loaded */ }
+```
+
+---
+
+## Usage Examples
 
 ### Basic Text Completion
 ```kotlin
-// Initialize and load
-llamaHelper.load(
-    path = modelUriString, // e.g. from a file picker
-    contextLength = 2048,
-) {
-    // Model loaded!
+// In your ViewModel
+fun generateResponse(userPrompt: String) {
+    llamaHelper.predict(userPrompt)
 }
 
-// Generate
-llamaHelper.predict("Why is the sky blue?")
+// In your UI (Jetpack Compose)
+LaunchedEffect(Unit) {
+    viewModel.llmFlow.collect { event ->
+        when (event) {
+            is Ongoing -> { /* Append event.word to your state */ }
+            is Done -> { /* Finish UI animation */ }
+            is Error -> { /* Show snackbar */ }
+        }
+    }
+}
 ```
 
-### Multimodal (Image Processing)
-To use multimodal features, you need a base GGUF model and its corresponding `mmproj` file.
+### Multimodal (Image Analysis)
+To analyze images, you must load a base model AND an `mmproj` projector file.
 ```kotlin
-// Load with multimodal projector
+// 1. Initialization
 llamaHelper.load(
     path = baseModelUri,
     contextLength = 4096,
-    mmprojPath = mmprojUri // Pass the projector file here
-) {
-    // Multimodal context ready!
-}
+    mmprojPath = mmprojUri // Provide the projector file here
+) { id -> /* Multimodal Ready */ }
 
-// Generate with an image
+// 2. Inference with image
+// Note: Per-prompt image injection. The helper automatically 
+// handles File Descriptors for the image.
 llamaHelper.predict(
-    prompt = "Describe this image in detail:",
-    imagePath = selectedImageUri // Pass the image URI here
+    prompt = "What objects are in this photo?",
+    imagePath = selectedImageUri 
 )
 ```
 
+---
+
+## Deep Dive into the Demo App
+For a complete working implementation, explore the following files in the [Demo App](app/src/main/java/org/nehuatl/sample):
+
+1.  [`MainActivity.kt`](app/src/main/java/org/nehuatl/sample/MainActivity.kt): Shows how to implement the file pickers and handle persistable permissions.
+2.  [`MainViewModel.kt`](app/src/main/java/org/nehuatl/sample/MainViewModel.kt): Demonstrates the clean integration of `LlamaHelper` with a reactive `StateFlow` UI.
+3.  [`ChatScreen.kt`](app/src/main/java/org/nehuatl/sample/ChatScreen.kt): A full Jetpack Compose UI showing how to display inference progress, block inputs during analysis, and handle multimodal results.
+
 ## Native Code Maintenance
-The native C++ core is synchronized with the latest `llama.cpp` developments. For instructions on how to update or rebuild the native components, see the [llamaCpp README](llamaCpp/README.md).
+The native C++ core is synchronized with modernized `llama.cpp` forks. For instructions on how to update or rebuild the native components, see the [llamaCpp Library README](llamaCpp/README.md).
 
-## Contributing
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-MIT
+## Contributing & License
+Contributions are welcome! Please feel free to submit a Pull Request. This project is licensed under the **MIT License**.
 
 ## Acknowledgments
-This project builds upon the work of:
-- [llama.cpp](https://github.com/ggerganov/llama.cpp) by Georgi Gerganov
-- [cui-llama.rn](https://github.com/Vali-98/cui-llama.rn) by Vali-98
+Built upon the excellence of:
+- [llama.cpp](https://github.com/ggerganov/llama.cpp) (Georgi Gerganov)
+- [cui-llama.rn](https://github.com/Vali-98/cui-llama.rn) (Vali-98)
 - [llama.rn](https://github.com/mybigday/llama.rn)
