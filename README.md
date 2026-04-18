@@ -58,15 +58,37 @@ The `LlamaHelper` class requires three main components to initialize:
 class MainViewModel(val contentResolver: ContentResolver) : ViewModel() {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    // Flow to collect events (Started, Ongoing, Done, etc.)
+    // 1. Flow to collect events from the engine
     private val _llmFlow = MutableSharedFlow<LlamaHelper.LLMEvent>(
         extraBufferCapacity = 64,
         onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
-    val llmFlow = _llmFlow.asSharedFlow()
+
+    // 2. StateFlow to hold the accumulated text for the UI
+    private val _generatedText = MutableStateFlow("")
+    val generatedText = _generatedText.asStateFlow()
 
     private val llamaHelper by lazy {
         LlamaHelper(contentResolver, scope, _llmFlow)
+    }
+
+    fun generate(prompt: String) {
+        scope.launch {
+            _generatedText.value = "" // Reset text
+            llamaHelper.predict(prompt)
+            
+            // 3. Collect events and accumulate text
+            _llmFlow.collect { event ->
+                when (event) {
+                    is LlamaHelper.LLMEvent.Ongoing -> {
+                        _generatedText.value += event.word
+                    }
+                    is LlamaHelper.LLMEvent.Done -> { /* Stop loading indicators */ }
+                    is LlamaHelper.LLMEvent.Error -> { /* Handle error */ }
+                    else -> {}
+                }
+            }
+        }
     }
 }
 ```
@@ -116,12 +138,15 @@ fun generateResponse(userPrompt: String) {
 }
 
 // In your UI (Jetpack Compose)
-LaunchedEffect(Unit) {
-    viewModel.llmFlow.collect { event ->
-        when (event) {
-            is Ongoing -> { /* Append event.word to your state */ }
-            is Done -> { /* Finish UI animation */ }
-            is Error -> { /* Show snackbar */ }
+@Composable
+fun SimpleChat(viewModel: MainViewModel) {
+    // 4. Listen to the StateFlow (lifecycle-aware)
+    val text by viewModel.generatedText.collectAsStateWithLifecycle()
+
+    Column {
+        Text(text = text) // Automatically updates as tokens arrive!
+        Button(onClick = { viewModel.generate("Hello!") }) {
+            Text("Generate")
         }
     }
 }
